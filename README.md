@@ -1,4 +1,4 @@
-# hidencloud-QD(测试中。。。4月20日手动运行测试效果)
+# hidencloud-QD(测试中。。。4月19日看自动运行测试效果)
 
 脚本需要登录信息，你必须在 GitHub 仓库配置 Secrets：
 
