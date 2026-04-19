@@ -1,10 +1,9 @@
-# .github/workflows/renew.yml
-name: HidenCloud Auto Renew
+name: Vortexa Auto Renew
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: '10 2 * * 0'
+    - cron: '10 2 */5 * *'   # 每5天执行一次（建议）
 
 permissions:
   contents: write
@@ -23,51 +22,38 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install System Dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y xvfb
-
-      # --- 修改点：安装 Playwright 和 官方 Chrome ---
-      - name: Install Playwright and Chrome
+      - name: Install dependencies
         run: |
           pip install playwright
-          # 安装 Playwright 对应的 Chrome 浏览器
-          python -m playwright install --with-deps chrome
+          python -m playwright install --with-deps chromium
 
-      - name: Run Renew Script with XVFB
+      - name: Run script
         env:
-          HIDENCLOUD_COOKIE: ${{ secrets.HIDENCLOUD_COOKIE }}
-          HIDENCLOUD_EMAIL: ${{ secrets.HIDENCLOUD_EMAIL }}
-          HIDENCLOUD_PASSWORD: ${{ secrets.HIDENCLOUD_PASSWORD }}
-          # --- 新增的 Telegram 机器人环境变量 ---
+          VORTEXA_COOKIE: ${{ secrets.VORTEXA_COOKIE }}
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-        # 使用 xvfb 模拟显示器
-        run: xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" python -u renew_service.py
+        run: python main.py
 
-      - name: Upload error artifacts
+      - name: Upload screenshots if failed
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: error-screenshots
           path: "*.png"
 
-      - name: Commit time.txt to repo
+      - name: Update time.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          if [ ! -f time.txt ]; then
-            echo "首次生成时间：$(date +'%Y-%m-%d %H:%M:%S')" > time.txt
-          else
-            echo "$(date +'%Y-%m-%d %H:%M:%S')" > time.txt
-          fi
+
+          echo "$(date +'%Y-%m-%d %H:%M:%S')" > time.txt
+
           git add time.txt
           if git diff --cached --quiet; then
-            echo "无变化，无需提交"
+            echo "no change"
           else
-            git commit -m "⏱️ 更新时间文件: $(date +'%Y-%m-%d %H:%M:%S')"
-            git push origin HEAD:main
+            git commit -m "⏱️ update time: $(date +'%Y-%m-%d %H:%M:%S')"
+            git push
           fi
