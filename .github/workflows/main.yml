@@ -40,6 +40,8 @@ jobs:
           HIDENCLOUD_COOKIE: ${{ secrets.HIDENCLOUD_COOKIE }}
           HIDENCLOUD_EMAIL: ${{ secrets.HIDENCLOUD_EMAIL }}
           HIDENCLOUD_PASSWORD: ${{ secrets.HIDENCLOUD_PASSWORD }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         # 使用 xvfb 模拟显示器
         run: xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" python -u renew_service.py
 
