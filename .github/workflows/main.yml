@@ -32,7 +32,7 @@ jobs:
           VORTEXA_COOKIE: ${{ secrets.VORTEXA_COOKIE }}
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-        run: python main.py
+        run: python renew_service.py
 
       - name: Upload screenshots if failed
         if: failure()
