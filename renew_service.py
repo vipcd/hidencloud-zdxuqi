@@ -11,26 +11,23 @@ HIDENCLOUD_COOKIE = os.environ.get('HIDENCLOUD_COOKIE')
 HIDENCLOUD_EMAIL = os.environ.get('HIDENCLOUD_EMAIL')
 HIDENCLOUD_PASSWORD = os.environ.get('HIDENCLOUD_PASSWORD')
 
-# --- 通知配置 (新增) ---
-# 这里以 Telegram 为例，你需要配置这两个环境变量
+# --- 通知配置 ---
 TG_BOT_TOKEN = os.environ.get('TG_BOT_TOKEN')
 TG_CHAT_ID = os.environ.get('TG_CHAT_ID')
 
 BASE_URL = "https://dash.hidencloud.com"
 LOGIN_URL = f"{BASE_URL}/auth/login"
-SERVICE_URL = f"{BASE_URL}/service/206500/manage" # 请确认这是你的服务ID
-COOKIE_NAME = "remember_web_59ba36addc2b2f9401580f014c7f58ea4e30989d"
+SERVICE_URL = f"{BASE_URL}/service/206500/manage"  # 请确认这是你的服务ID
+DEFAULT_COOKIE_NAME = "remember_web_59ba36addc2b2f9401580f014c7f58ea4e30989d"
 
 def log(message):
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {message}", flush=True)
 
-# --- 通知函数 (新增) ---
 def send_notification(title, message):
     """发送机器人通知的主函数"""
     full_message = f"🤖 {title}\n\n{message}\n\n⏰ 时间: {time.strftime('%Y-%m-%d %H:%M:%S')}"
     log(f"📣 准备发送通知: {title}")
 
-    # Telegram 通知逻辑
     if TG_BOT_TOKEN and TG_CHAT_ID:
         try:
             url = f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage"
@@ -49,9 +46,7 @@ STEALTH_JS = """
 """
 
 def handle_cloudflare(page):
-    """
-    通用验证处理逻辑
-    """
+    """通用 Cloudflare 验证处理逻辑"""
     iframe_selector = 'iframe[src*="challenges.cloudflare.com"]'
     
     if page.locator(iframe_selector).count() == 0:
@@ -82,6 +77,65 @@ def handle_cloudflare(page):
     log("❌ 验证超时。")
     return False
 
+def inject_cookies(context, raw_cookie):
+    """智能解析并批量注入 Cookie（支持 JSON 数组和普通字符串）"""
+    if not raw_cookie:
+        return False
+    
+    raw_cookie = raw_cookie.strip()
+    
+    # 尝试作为 JSON 数组解析
+    if raw_cookie.startswith('[') or raw_cookie.startswith('{'):
+        try:
+            cookies_list = json.loads(raw_cookie)
+            if isinstance(cookies_list, dict):
+                cookies_list = [cookies_list]
+            
+            playwright_cookies = []
+            for c in cookies_list:
+                cookie_dict = {
+                    'name': c.get('name'),
+                    'value': str(c.get('value', '')),
+                    'domain': c.get('domain', '.hidencloud.com'),
+                    'path': c.get('path', '/'),
+                }
+                
+                if 'expirationDate' in c and c['expirationDate']:
+                    cookie_dict['expires'] = float(c['expirationDate'])
+                if 'httpOnly' in c:
+                    cookie_dict['httpOnly'] = bool(c['httpOnly'])
+                if 'secure' in c:
+                    cookie_dict['secure'] = bool(c['secure'])
+                
+                # 转化 sameSite 映射
+                same_site = str(c.get('sameSite', '')).lower()
+                if same_site in ['strict', 'lax', 'none']:
+                    cookie_dict['sameSite'] = same_site.capitalize()
+                elif same_site == 'no_restriction':
+                    cookie_dict['sameSite'] = 'None'
+
+                playwright_cookies.append(cookie_dict)
+            
+            context.add_cookies(playwright_cookies)
+            log(f"✅ 成功提取并注入 JSON 中的 {len(playwright_cookies)} 个 Cookie。")
+            return True
+        except Exception as e:
+            log(f"⚠️ 解析 JSON Cookie 失败 ({e})，将尝试以纯文本注入...")
+
+    # 如果非 JSON，作为单个 value 字符串处理
+    log("尝试作为单个 Cookie 字符串注入...")
+    context.add_cookies([{
+        'name': DEFAULT_COOKIE_NAME,
+        'value': raw_cookie,
+        'domain': '.hidencloud.com',
+        'path': '/',
+        'expires': int(time.time()) + 3600 * 24 * 365,
+        'httpOnly': True,
+        'secure': True,
+        'sameSite': 'Lax'
+    }])
+    return True
+
 def login(page):
     log("开始登录流程...")
     
@@ -89,25 +143,21 @@ def login(page):
     if HIDENCLOUD_COOKIE:
         log("尝试 Cookie 登录...")
         try:
-            page.context.add_cookies([{
-                'name': COOKIE_NAME, 'value': HIDENCLOUD_COOKIE,
-                'domain': 'dash.hidencloud.com', 'path': '/',
-                'expires': int(time.time()) + 3600 * 24 * 365,
-                'httpOnly': True, 'secure': True, 'sameSite': 'Lax'
-            }])
+            inject_cookies(page.context, HIDENCLOUD_COOKIE)
             page.goto(SERVICE_URL, wait_until="domcontentloaded", timeout=60000)
             handle_cloudflare(page)
             
             if "auth/login" not in page.url:
-                log("✅ Cookie 登录成功！")
+                log(f"✅ Cookie 登录成功！当前所在页面: {page.url}")
                 return True
-            log("Cookie 失效。")
-        except:
-            pass
+            log(f"Cookie 未生效或已失效，当前被引导至: {page.url}")
+        except Exception as e:
+            log(f"Cookie 登录过程发生错误: {e}")
 
     # 2. 账号密码登录
     if not HIDENCLOUD_EMAIL or not HIDENCLOUD_PASSWORD:
-        send_notification("登录失败", "缺少 Cookie 或 账号密码环境变量。")
+        log("❌ Cookie 登录失败，且未提供账号密码变量 (HIDENCLOUD_EMAIL / HIDENCLOUD_PASSWORD)。")
+        send_notification("登录失败", "Cookie 失效且未在 GitHub Secrets 配置账号密码。")
         return False
 
     log("尝试账号密码登录...")
@@ -218,7 +268,6 @@ def renew_service(page):
         log("✅ 'Pay' 按钮已点击。")
         time.sleep(5)
         
-        # 成功通知
         send_notification("🎉 续费成功", f"服务 [{SERVICE_URL}] 的续期发票已成功点击支付！")
         return True
 
