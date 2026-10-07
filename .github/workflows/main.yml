@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: write
+  actions: write # 新增：允许脚本清理 GitHub Actions 运行记录
 
 jobs:
   renew-job:
@@ -28,11 +29,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y xvfb
 
-      # --- 修改点：安装 Playwright 和 官方 Chrome ---
+      # --- 安装 Playwright 和 官方 Chrome ---
       - name: Install Playwright and Chrome
         run: |
           pip install playwright
-          # 安装 Playwright 对应的 Chrome 浏览器
           python -m playwright install --with-deps chrome
 
       - name: Run Renew Script with XVFB
@@ -42,7 +42,6 @@ jobs:
           HIDENCLOUD_PASSWORD: ${{ secrets.HIDENCLOUD_PASSWORD }}
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-        # 使用 xvfb 模拟显示器
         run: xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" python -u renew_service.py
 
       - name: Upload error artifacts
@@ -70,3 +69,13 @@ jobs:
             git commit -m "⏱️ 更新时间文件: $(date +'%Y-%m-%d %H:%M:%S')"
             git push origin HEAD:main
           fi
+
+      # --- 自动清理历史运行日志，仅保留最新 1 条 ---
+      - name: Delete old workflow runs
+        if: always() # 确保即使前面步骤失败也会执行清理
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          retain_days: 0
+          keep_minimum_runs: 1
