@@ -198,7 +198,8 @@ def renew_service(page):
         handle_cloudflare(page)
 
         log("准备点击 'Renew' 按钮...")
-        renew_btn = page.locator('button:has-text("Renew")')
+        # 同时匹配 button 和 a 标签，并取第一个，提高兼容性
+        renew_btn = page.locator('button:has-text("Renew"), a:has-text("Renew")').first
         create_btn = page.locator('button:has-text("Create Invoice")')
         
         modal_opened = False
@@ -208,7 +209,8 @@ def renew_service(page):
                 renew_btn.scroll_into_view_if_needed()
                 
                 log(f"第 {i+1} 次尝试点击 'Renew'...")
-                renew_btn.click()
+                # 使用 force=True 绕过可能的遮挡或未完全可交互状态
+                renew_btn.click(force=True)
                 
                 log("等待弹窗出现...")
                 try:
@@ -231,7 +233,7 @@ def renew_service(page):
         handle_cloudflare(page)
         
         log("点击 'Create Invoice'...")
-        create_btn.click()
+        create_btn.click(force=True)
         
         log("等待发票生成...")
         new_invoice_url = None
@@ -263,7 +265,7 @@ def renew_service(page):
         log("查找 'Pay' 按钮...")
         pay_btn = page.locator('a:has-text("Pay"):visible, button:has-text("Pay"):visible').first
         pay_btn.wait_for(state="visible", timeout=30000)
-        pay_btn.click()
+        pay_btn.click(force=True)
         
         log("✅ 'Pay' 按钮已点击。")
         time.sleep(5)
