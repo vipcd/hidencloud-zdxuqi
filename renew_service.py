@@ -198,7 +198,6 @@ def renew_service(page):
         handle_cloudflare(page)
 
         log("准备点击 'Renew' 按钮...")
-        # 同时匹配 button 和 a 标签，并取第一个，提高兼容性
         renew_btn = page.locator('button:has-text("Renew"), a:has-text("Renew")').first
         create_btn = page.locator('button:has-text("Create Invoice")')
         
@@ -209,7 +208,6 @@ def renew_service(page):
                 renew_btn.scroll_into_view_if_needed()
                 
                 log(f"第 {i+1} 次尝试点击 'Renew'...")
-                # 使用 force=True 绕过可能的遮挡或未完全可交互状态
                 renew_btn.click(force=True)
                 
                 log("等待弹窗出现...")
@@ -235,14 +233,23 @@ def renew_service(page):
         log("点击 'Create Invoice'...")
         create_btn.click(force=True)
         
-        log("等待发票生成...")
-        new_invoice_url = None
+        log("等待发票生成或跳转...")
         start_wait = time.time()
+        invoice_ready = False
         
-        while time.time() - start_wait < 90:
-            if "/payment/invoice/" in page.url:
-                new_invoice_url = page.url
-                log(f"🎉 页面已跳转: {new_invoice_url}")
+        while time.time() - start_wait < 60:
+            current_url = page.url
+            # 兼容多种账单/发票页面的 URL 规则
+            if any(path in current_url for path in ["/invoice/", "/invoices/", "/billing/"]):
+                log(f"🎉 页面已跳转到账单页: {current_url}")
+                invoice_ready = True
+                break
+            
+            # 或者检查页面上是否直接出现了 Pay 按钮
+            pay_btn_check = page.locator('a:has-text("Pay"):visible, button:has-text("Pay"):visible').first
+            if pay_btn_check.count() > 0 and pay_btn_check.is_visible():
+                log("🎉 检测到支付按钮已出现！")
+                invoice_ready = True
                 break
             
             if page.locator('iframe[src*="challenges.cloudflare.com"]').count() > 0:
@@ -251,18 +258,15 @@ def renew_service(page):
             
             time.sleep(1)
         
-        if not new_invoice_url:
+        if not invoice_ready:
             log("❌ 未能进入发票页面，超时。")
             page.screenshot(path="renew_stuck_invoice.png")
             send_notification("续费超时", "已点击 Create Invoice，但长时间未跳转到账单支付页面。")
             return False
 
-        if page.url != new_invoice_url:
-            page.goto(new_invoice_url)
-            
         handle_cloudflare(page)
 
-        log("查找 'Pay' 按钮...")
+        log("查找并点击 'Pay' 按钮...")
         pay_btn = page.locator('a:has-text("Pay"):visible, button:has-text("Pay"):visible').first
         pay_btn.wait_for(state="visible", timeout=30000)
         pay_btn.click(force=True)
