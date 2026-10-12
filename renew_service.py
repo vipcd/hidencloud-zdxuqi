@@ -198,7 +198,11 @@ def renew_service(page):
         handle_cloudflare(page)
 
         log("准备点击 'Renew' 按钮...")
-        renew_btn = page.locator('button:has-text("Renew"), a:has-text("Renew")').first
+        # 优化定位器，精准匹配绿色 Renew 按钮
+        renew_btn = page.locator('button:has-text("Renew"), a:has-text("Renew")').filter(has=page.locator('xpath=not(ancestor::div[@class="modal"])')).first
+        if renew_btn.count() == 0:
+            renew_btn = page.locator('button:has-text("Renew"), a:has-text("Renew")').first
+            
         create_btn = page.locator('button:has-text("Create Invoice")')
         
         modal_opened = False
@@ -228,6 +232,8 @@ def renew_service(page):
             send_notification("续费失败", "尝试多次点击 Renew 按钮后，创建账单弹窗仍未出现。")
             return False
 
+        # ⭐️ 关键修复：弹窗出现后，立刻检测并处理弹窗内部的 Cloudflare 验证（如图二所示）
+        log("检查并处理弹窗内的 Cloudflare 验证...")
         handle_cloudflare(page)
         
         log("点击 'Create Invoice'...")
@@ -239,13 +245,11 @@ def renew_service(page):
         
         while time.time() - start_wait < 60:
             current_url = page.url
-            # 兼容多种账单/发票页面的 URL 规则
             if any(path in current_url for path in ["/invoice/", "/invoices/", "/billing/"]):
                 log(f"🎉 页面已跳转到账单页: {current_url}")
                 invoice_ready = True
                 break
             
-            # 或者检查页面上是否直接出现了 Pay 按钮
             pay_btn_check = page.locator('a:has-text("Pay"):visible, button:has-text("Pay"):visible').first
             if pay_btn_check.count() > 0 and pay_btn_check.is_visible():
                 log("🎉 检测到支付按钮已出现！")
