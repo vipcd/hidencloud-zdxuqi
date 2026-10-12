@@ -17,7 +17,7 @@ TG_CHAT_ID = os.environ.get('TG_CHAT_ID')
 
 BASE_URL = "https://dash.hidencloud.com"
 LOGIN_URL = f"{BASE_URL}/auth/login"
-SERVICE_URL = f"{BASE_URL}/service/206500/manage"  # 请确认这是你的服务ID
+SERVICE_URL = f"{BASE_URL}/service/206500/manage"
 DEFAULT_COOKIE_NAME = "remember_web_59ba36addc2b2f9401580f014c7f58ea4e30989d"
 
 def log(message):
@@ -52,7 +52,7 @@ def handle_cloudflare(page):
     if page.locator(iframe_selector).count() == 0:
         return True
 
-    log("⚠️ 检测到 Cloudflare 验证...")
+    log("⚠️ 检测到 Cloudflare 验证，正在尝试自动通过...")
     start_time = time.time()
     
     while time.time() - start_time < 60:
@@ -64,7 +64,7 @@ def handle_cloudflare(page):
             frame = page.frame_locator(iframe_selector)
             checkbox = frame.locator('input[type="checkbox"]')
             if checkbox.is_visible():
-                log("点击验证复选框...")
+                log("点击人机验证复选框...")
                 time.sleep(random.uniform(0.5, 1.5))
                 checkbox.click()
                 log("已点击，等待验证结果...")
@@ -78,13 +78,12 @@ def handle_cloudflare(page):
     return False
 
 def inject_cookies(context, raw_cookie):
-    """智能解析并批量注入 Cookie（支持 JSON 数组和普通字符串）"""
+    """智能解析并批量注入 Cookie"""
     if not raw_cookie:
         return False
     
     raw_cookie = raw_cookie.strip()
     
-    # 尝试作为 JSON 数组解析
     if raw_cookie.startswith('[') or raw_cookie.startswith('{'):
         try:
             cookies_list = json.loads(raw_cookie)
@@ -107,7 +106,6 @@ def inject_cookies(context, raw_cookie):
                 if 'secure' in c:
                     cookie_dict['secure'] = bool(c['secure'])
                 
-                # 转化 sameSite 映射
                 same_site = str(c.get('sameSite', '')).lower()
                 if same_site in ['strict', 'lax', 'none']:
                     cookie_dict['sameSite'] = same_site.capitalize()
@@ -122,7 +120,6 @@ def inject_cookies(context, raw_cookie):
         except Exception as e:
             log(f"⚠️ 解析 JSON Cookie 失败 ({e})，将尝试以纯文本注入...")
 
-    # 如果非 JSON，作为单个 value 字符串处理
     log("尝试作为单个 Cookie 字符串注入...")
     context.add_cookies([{
         'name': DEFAULT_COOKIE_NAME,
@@ -139,7 +136,6 @@ def inject_cookies(context, raw_cookie):
 def login(page):
     log("开始登录流程...")
     
-    # 1. Cookie 登录尝试
     if HIDENCLOUD_COOKIE:
         log("尝试 Cookie 登录...")
         try:
@@ -154,9 +150,8 @@ def login(page):
         except Exception as e:
             log(f"Cookie 登录过程发生错误: {e}")
 
-    # 2. 账号密码登录
     if not HIDENCLOUD_EMAIL or not HIDENCLOUD_PASSWORD:
-        log("❌ Cookie 登录失败，且未提供账号密码变量 (HIDENCLOUD_EMAIL / HIDENCLOUD_PASSWORD)。")
+        log("❌ Cookie 登录失败，且未提供账号密码变量。")
         send_notification("登录失败", "Cookie 失效且未在 GitHub Secrets 配置账号密码。")
         return False
 
@@ -198,11 +193,8 @@ def renew_service(page):
         handle_cloudflare(page)
 
         log("准备点击 'Renew' 按钮...")
-        # 优化定位器，精准匹配绿色 Renew 按钮
-        renew_btn = page.locator('button:has-text("Renew"), a:has-text("Renew")').filter(has=page.locator('xpath=not(ancestor::div[@class="modal"])')).first
-        if renew_btn.count() == 0:
-            renew_btn = page.locator('button:has-text("Renew"), a:has-text("Renew")').first
-            
+        # 修复选择器，使用稳定的复合定位
+        renew_btn = page.locator('button:has-text("Renew"), a:has-text("Renew")').first
         create_btn = page.locator('button:has-text("Create Invoice")')
         
         modal_opened = False
@@ -232,8 +224,8 @@ def renew_service(page):
             send_notification("续费失败", "尝试多次点击 Renew 按钮后，创建账单弹窗仍未出现。")
             return False
 
-        # ⭐️ 关键修复：弹窗出现后，立刻检测并处理弹窗内部的 Cloudflare 验证（如图二所示）
-        log("检查并处理弹窗内的 Cloudflare 验证...")
+        # ⭐️ 关键步骤：弹窗弹出后立即处理人机验证
+        log("处理弹窗中的人机验证...")
         handle_cloudflare(page)
         
         log("点击 'Create Invoice'...")
@@ -289,7 +281,7 @@ def renew_service(page):
 
 def main():
     if not HIDENCLOUD_COOKIE and not (HIDENCLOUD_EMAIL and HIDENCLOUD_PASSWORD):
-        send_notification("配置错误", "未提供登录凭证（Cookie或账号密码），脚本退出。")
+        send_notification("配置错误", "未提供登录凭证，脚本退出。")
         sys.exit(1)
 
     with sync_playwright() as p:
