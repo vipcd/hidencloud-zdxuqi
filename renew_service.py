@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import os,re,sys,time,random,requests
+import os,re,sys,time,random,requests,json
 try:
     from patchright.sync_api import sync_playwright
     USING_PATCHRIGHT = True
@@ -10,9 +10,9 @@ except ImportError:
     USING_PATCHRIGHT = False
 
 # --- 环境变量 ---
-COOKIE_VALUE = os.environ.get('COOKIE_VALUE') or ""    # 绑定了Discord的 cookie 值，强烈建议使用此项
-EMAIL        = os.environ.get('EMAIL') or ""           # 登录邮箱（如配置了COOKIE_VALUE，建议清空此项以防被拦截）
-PASSWORD     = os.environ.get('PASSWORD') or ""        # 登录密码
+COOKIE_VALUE = os.environ.get('COOKIE_VALUE') or ""    # 完整复制从小饼干导出的 JSON 数组粘贴到此变量中
+EMAIL        = os.environ.get('EMAIL') or ""           # 留空即可
+PASSWORD     = os.environ.get('PASSWORD') or ""        # 留空即可
 TG_CHAT_ID   = os.environ.get('TG_CHAT_ID') or ""      # Telegram Chat ID
 TG_BOT_TOKEN = os.environ.get('TG_BOT_TOKEN') or ""    # Telegram Bot Token 
 
@@ -24,16 +24,13 @@ IS_PROXY      = os.environ.get('IS_PROXY', 'false').lower() == 'true'
 PROXY_SERVER  = os.environ.get('PROXY_SERVER') or "http://127.0.0.1:1081"
 REQUESTS_PROXIES = {"http": PROXY_SERVER, "https": PROXY_SERVER} if IS_PROXY else None
 
-# Cloudflare 整页挑战 / Turnstile 组件共用的 iframe 选择器
 CF_IFRAME_SELECTOR = 'iframe[src*="challenges.cloudflare.com"]'
 
-# 按运行平台选择 UA
 if sys.platform == 'win32':
     DEFAULT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
 else:
     DEFAULT_UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'
 
-# 日志
 def log(message):
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {message}", flush=True)
 
@@ -44,7 +41,6 @@ try {
 """
 
 def get_current_ip(proxy_server=None):
-    """获取当前出口IP"""
     proxies = {"http": proxy_server, "https": proxy_server} if (proxy_server and IS_PROXY) else None
     try:
         resp = requests.get("https://api.ip.sb/ip", proxies=proxies, timeout=15)
@@ -56,21 +52,15 @@ def get_current_ip(proxy_server=None):
         return "获取失败"
 
 def send_telegram_notification(status, old_due, new_due, current_ip="未知"):
-    """发送 Telegram 通知"""
     if not TG_BOT_TOKEN or not TG_CHAT_ID:
         log("⚠️ Telegram 未配置，跳过通知")
         return False
     
     local_time = time.gmtime(time.time() + 8 * 3600)
-    masked_email = "Cookie授权账户"
-    if '@' in EMAIL:
-        name, domain = EMAIL.split('@', 1)
-        masked_email = f"{name[:2]}****@{domain}" if len(name) > 4 else f"{name}@{domain}"
-
     text = (
         f"🎉 HidenCloud 续期通知\n\n"
         f"{status}\n"
-        f"👤 账户类型: {masked_email}\n"
+        f"👤 账户类型: Cookie 授权账户\n"
         f"📅 续期前到期：{old_due}\n"
         f"📅 续期后到期：{new_due}\n"
         f"🌐 续期使用IP: {current_ip}\n"
@@ -301,6 +291,66 @@ def solve_modal_turnstile(page, timeout=90):
         return True
     return False
 
+def inject_cookies(context, raw_cookie):
+    """严格清洗、过滤并注入 Cookie，只保留并修正 Playwright/CDP 兼容的字段"""
+    if not raw_cookie:
+        return False
+    
+    raw_cookie = raw_cookie.strip()
+    
+    if raw_cookie.startswith('['):
+        try:
+            cookies_list = json.loads(raw_cookie)
+            playwright_cookies = []
+            for c in cookies_list:
+                name = c.get('name')
+                value = c.get('value')
+                if not name or not value:
+                    continue
+                
+                domain = c.get('domain', '.dash.hidencloud.com')
+                # 仅保留 hidencloud 域名下的 Cookie，过滤掉第三方广告/统计域名的非法字段
+                if 'hidencloud.com' not in domain:
+                    continue
+
+                clean_cookie = {
+                    'name': str(name),
+                    'value': str(value),
+                    'domain': str(domain),
+                    'path': str(c.get('path', '/'))
+                }
+                
+                expires = c.get('expires') or c.get('expirationDate')
+                if expires:
+                    try:
+                        ex_val = float(expires)
+                        if ex_val > time.time():
+                            clean_cookie['expires'] = ex_val
+                    except:
+                        pass
+                
+                if 'httpOnly' in c:
+                    clean_cookie['httpOnly'] = bool(c['httpOnly'])
+                if 'secure' in c:
+                    clean_cookie['secure'] = bool(c['secure'])
+                
+                # 严格校验 sameSite，剔除 Chrome 不识别的非标字段（如 no_restriction、unspecified）
+                same_site = str(c.get('sameSite', '')).lower()
+                if same_site in ['strict', 'lax', 'none']:
+                    clean_cookie['sameSite'] = same_site.capitalize()
+
+                playwright_cookies.append(clean_cookie)
+            
+            if playwright_cookies:
+                context.add_cookies(playwright_cookies)
+                log(f"✅ 成功清洗并注入 {len(playwright_cookies)} 个有效 Cookie！")
+                return True
+        except Exception as e:
+            log(f"⚠️ 解析 JSON Cookie 失败: {e}")
+            return False
+
+    return False
+
 def open_browser(p):
     proxy_arg = {"server": PROXY_SERVER} if IS_PROXY else None
     if USING_PATCHRIGHT:
@@ -342,82 +392,20 @@ def login(page):
     if COOKIE_VALUE:
         log("📇 尝试 Cookie 登录...")
         try:
-            page.context.add_cookies([{
-                'name': 'remember_web_59ba36addc2b2f9401580f014c7f58ea4e30989d',
-                'value': COOKIE_VALUE,
-                'domain': 'dash.hidencloud.com',
-                'path': '/',
-                'expires': int(time.time()) + 3600 * 24 * 365,
-                'httpOnly': True,
-                'secure': True,
-                'sameSite': 'Lax'
-            }])
+            inject_cookies(page.context, COOKIE_VALUE)
             page.goto(f"{BASE_URL}/dashboard", wait_until="domcontentloaded", timeout=60000)
             handle_cloudflare(page, timeout=240)
             time.sleep(2)
             handle_cloudflare(page, timeout=60)
             if _is_logged_in(page):
-                log("✅ Cookie 登录成功！当前已到达dashboard页面")
+                log("✅ Cookie 登录成功！当前已到达 dashboard 页面")
                 return True
             log("❌ Cookie 已失效或不正确")
         except Exception as e:
             log(f"⚠️ Cookie 登录尝试异常: {e}")
 
-    if not EMAIL or not PASSWORD:
-        log("❌ 未配置有效 Cookie，且未提供账号密码")
-        return False
-    
-    log("💣 尝试账号密码登录...")
-    try:
-        page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=60000)
-        handle_cloudflare(page, timeout=240)
-        time.sleep(2)
-        
-        user_input = page.locator('input[name="username"], input[name="email"], input[type="email"]').first
-        pwd_input = page.locator('input[name="password"], input[type="password"]').first
-        try:
-            user_input.wait_for(state="visible", timeout=30000)
-        except Exception:
-            handle_cloudflare(page, timeout=120)
-            user_input.wait_for(state="visible", timeout=30000)
-        user_input.fill(EMAIL, timeout=10000)
-        pwd_input.fill(PASSWORD, timeout=10000)
-        time.sleep(0.5)
-        handle_cloudflare(page, timeout=60)
-
-        solve_modal_turnstile(page, timeout=90)
-        
-        try:
-            page.click('button[type="submit"]', timeout=8000)
-        except Exception:
-            page.locator('button:has-text("Sign in"), button:has-text("登录")').first.click(timeout=10000)
-        time.sleep(3)
-        handle_cloudflare(page, timeout=240)
-        nav_start = time.time()
-        navigated = False
-        while time.time() - nav_start < 120:
-            try:
-                if "/auth/login" not in page.url and not _is_security_check_page(page):
-                    navigated = True
-                    break
-                if _is_security_check_page(page) or _has_interstitial_iframe(page):
-                    handle_cloudflare(page, timeout=60)
-            except Exception:
-                pass
-            time.sleep(1)
-        if not navigated:
-            page.screenshot(path="login_fail.png")
-            return False
-        page.goto(f"{BASE_URL}/dashboard", wait_until="domcontentloaded", timeout=60000)
-        handle_cloudflare(page, timeout=120)
-        if not _is_logged_in(page):
-            return False
-        log("✅ 账号密码登录成功！当前已到达dashboard页面")
-        return True
-    except Exception as e:
-        log(f"❌ 登录异常: {e}")
-        page.screenshot(path="login_fail.png")
-        return False
+    log("❌ 未能通过 Cookie 成功登录")
+    return False
 
 def get_server_id(page):
     try:
@@ -508,11 +496,9 @@ def renew_service(page):
             page.screenshot(path="renew_modal_failed.png")
             return False
 
-        # 处理弹窗内 Turnstile 人机验证
         handle_cloudflare(page, timeout=60)
         solve_modal_turnstile(page, timeout=90)
 
-        # 点击 Create Invoice 循环逻辑（每次动态获取元素，防止页面刷新后元素句柄失效）
         new_invoice_url = None
         for attempt in range(6):
             log(f"🖱️ 点击 'Create Invoice'（第 {attempt + 1} 次）...")
@@ -520,7 +506,6 @@ def renew_service(page):
                 current_create_btn = page.locator('button:has-text("Create Invoice")')
                 current_create_btn.wait_for(state="visible", timeout=20000)
                 
-                # 自动移除可能拦截点击的 Cookie 弹窗
                 try:
                     page.evaluate("() => { const banner = document.getElementById('ncmp__tool'); if (banner) banner.remove(); }")
                 except Exception:
@@ -575,8 +560,8 @@ def renew_service(page):
 def main():
     log(f"🔍 凭证检测: COOKIE_VALUE={'已配置' if COOKIE_VALUE else '未配置'}, "
         f"EMAIL={'已配置' if EMAIL else '未配置'}, PASSWORD={'已配置' if PASSWORD else '未配置'}")
-    if not COOKIE_VALUE and not (EMAIL and PASSWORD):
-        log("❌ 缺少登录凭证")
+    if not COOKIE_VALUE:
+        log("❌ 缺少有效 COOKIE_VALUE 凭证")
         sys.exit(1)
 
     global SERVICE_URL
