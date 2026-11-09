@@ -10,11 +10,11 @@ except ImportError:
     USING_PATCHRIGHT = False
 
 # --- 环境变量 ---
-COOKIE_VALUE = os.environ.get('COOKIE_VALUE') or ""    # remember_web cookie 值，必填
-EMAIL        = os.environ.get('EMAIL') or ""           # 登录邮箱,可选，作为备用, 必填
-PASSWORD     = os.environ.get('PASSWORD') or ""        # 登录密码,可选，作为备用, 必填
-TG_CHAT_ID   = os.environ.get('TG_CHAT_ID') or ""      # Telegram Chat ID,可选，通知
-TG_BOT_TOKEN = os.environ.get('TG_BOT_TOKEN') or ""    # Telegram Bot Token,可选 
+COOKIE_VALUE = os.environ.get('COOKIE_VALUE') or ""    
+EMAIL        = os.environ.get('EMAIL') or ""           
+PASSWORD     = os.environ.get('PASSWORD') or ""        
+TG_CHAT_ID   = os.environ.get('TG_CHAT_ID') or ""      
+TG_BOT_TOKEN = os.environ.get('TG_BOT_TOKEN') or ""    
 
 BASE_URL = "https://dash.hidencloud.com"
 LOGIN_URL = f"{BASE_URL}/auth/login"
@@ -24,16 +24,13 @@ IS_PROXY      = os.environ.get('IS_PROXY', 'false').lower() == 'true'
 PROXY_SERVER  = os.environ.get('PROXY_SERVER') or "http://127.0.0.1:1081"
 REQUESTS_PROXIES = {"http": PROXY_SERVER, "https": PROXY_SERVER} if IS_PROXY else None
 
-# Cloudflare 整页挑战 / Turnstile 组件共用的 iframe 选择器
 CF_IFRAME_SELECTOR = 'iframe[src*="challenges.cloudflare.com"]'
 
-# 按运行平台选择 UA
 if sys.platform == 'win32':
     DEFAULT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
 else:
     DEFAULT_UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'
 
-# 日志
 def log(message):
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {message}", flush=True)
 
@@ -44,7 +41,6 @@ try {
 """
 
 def get_current_ip(proxy_server=None):
-    """获取当前出口IP"""
     proxies = {"http": proxy_server, "https": proxy_server} if (proxy_server and IS_PROXY) else None
     try:
         resp = requests.get("https://api.ip.sb/ip", proxies=proxies, timeout=15)
@@ -56,7 +52,6 @@ def get_current_ip(proxy_server=None):
         return "获取失败"
 
 def send_telegram_notification(status, old_due, new_due, current_ip="未知"):
-    """发送 Telegram 通知"""
     if not TG_BOT_TOKEN or not TG_CHAT_ID:
         log("⚠️ Telegram 未配置，跳过通知")
         return False
@@ -88,18 +83,11 @@ def send_telegram_notification(status, old_due, new_due, current_ip="未知"):
     }
     try:
         resp = requests.post(url, json=payload, timeout=10, proxies=REQUESTS_PROXIES)
-        if resp.status_code == 200:
-            log("✅ Telegram 通知发送成功")
-            return True
-        else:
-            log(f"❌ Telegram 通知失败: {resp.text}")
-            return False
-    except Exception as e:
-        log(f"❌ Telegram 通知异常: {e}")
+        return resp.status_code == 200
+    except Exception:
         return False
 
 def _get_turnstile_token(page):
-    """读取 Turnstile 验证通过后生成的响应 token"""
     try:
         return page.evaluate(
             """
@@ -129,7 +117,6 @@ def _get_turnstile_token(page):
         return None
 
 def _find_visible_cf_frames(page):
-    """返回当前可见且有实际尺寸的 Cloudflare 挑战/Turnstile iframe"""
     result = []
     try:
         for handle in page.query_selector_all(CF_IFRAME_SELECTOR):
@@ -144,7 +131,6 @@ def _find_visible_cf_frames(page):
     return result
 
 def _cf_checkbox_visible(page):
-    """任意 Cloudflare 框架内当前是否可见复选框"""
     for frame in page.frames:
         if 'challenges.cloudflare.com' not in (frame.url or ''):
             continue
@@ -156,7 +142,6 @@ def _cf_checkbox_visible(page):
     return False
 
 def _click_cf_checkbox(page, frame_el=None):
-    """点击 Cloudflare/Turnstile 复选框"""
     for frame in page.frames:
         if 'challenges.cloudflare.com' not in (frame.url or ''):
             continue
@@ -225,7 +210,6 @@ def _click_security_submit(page):
             btn = page.locator(f'button:has-text("{text}"):visible, input[type="submit"]:visible').first
             if btn.count() > 0:
                 btn.click(timeout=3000)
-                log(f"🖱️ 已点击安全验证页的确认按钮（{text}）...")
                 return True
         except Exception:
             continue
@@ -247,7 +231,6 @@ def handle_cloudflare(page, timeout=240):
     time.sleep(5)
 
     effective_timeout = timeout + (180 if timeout > 60 else 0)
-    manual_hinted = False
     start_time = time.time()
     last_click = 0
     clear_rounds = 0
@@ -259,9 +242,6 @@ def handle_cloudflare(page, timeout=240):
             time.sleep(1)
             continue
         clear_rounds = 0
-        if not manual_hinted and timeout > 60 and time.time() - start_time > timeout - 30:
-            log("🤝 自动点击未能通过验证，脚本会继续等待...")
-            manual_hinted = True
         if time.time() - last_click > 6:
             frames = _find_visible_cf_frames(page)
             if frames:
@@ -276,7 +256,6 @@ def handle_cloudflare(page, timeout=240):
                     time.sleep(random.uniform(2, 4))
                     continue
         time.sleep(1)
-    log("❌ 验证超时。")
     return False
 
 def solve_modal_turnstile(page, timeout=90):
@@ -293,7 +272,6 @@ def solve_modal_turnstile(page, timeout=90):
         if not frames:
             no_frame_seconds += 1
             if no_frame_seconds >= 20 and clicks == 0:
-                log("ℹ️ 未检测到 Turnstile 验证框，无需验证。")
                 return True
             time.sleep(1)
             continue
@@ -320,7 +298,6 @@ def solve_modal_turnstile(page, timeout=90):
     if _get_turnstile_token(page):
         log("✅ Turnstile 验证通过！")
         return True
-    log("❌ Turnstile 验证超时。")
     return False
 
 def open_browser(p):
@@ -379,9 +356,8 @@ def login(page):
             time.sleep(2)
             handle_cloudflare(page, timeout=60)
             if _is_logged_in(page):
-                log(f"✅ Cookie 登录成功！当前已到达dashboard页面")
+                log("✅ Cookie 登录成功！当前已到达dashboard页面")
                 return True
-            log("❌ Cookie 失效，请更换")
         except Exception as e:
             log(f"⚠️ Cookie 登录尝试异常: {e}")
 
@@ -393,7 +369,6 @@ def login(page):
         handle_cloudflare(page, timeout=240)
         time.sleep(2)
         
-        log("⌨️ 输入账号密码...")
         user_input = page.locator('input[name="username"], input[name="email"], input[type="email"]').first
         pwd_input = page.locator('input[name="password"], input[type="password"]').first
         try:
@@ -406,10 +381,8 @@ def login(page):
         time.sleep(0.5)
         handle_cloudflare(page, timeout=60)
 
-        if not solve_modal_turnstile(page, timeout=90):
-            log("⚠️ 登录表单的 Turnstile 未确认通过，仍将尝试提交...")
+        solve_modal_turnstile(page, timeout=90)
         
-        log("🖱️ 点击登录按钮提交...")
         try:
             page.click('button[type="submit"]', timeout=8000)
         except Exception:
@@ -429,15 +402,13 @@ def login(page):
                 pass
             time.sleep(1)
         if not navigated:
-            log("❌ 登录提交后未能完成跳转。")
             page.screenshot(path="login_fail.png")
             return False
         page.goto(f"{BASE_URL}/dashboard", wait_until="domcontentloaded", timeout=60000)
         handle_cloudflare(page, timeout=120)
         if not _is_logged_in(page):
-            log("❌ 登录失败。")
             return False
-        log(f"✅ 账号密码登录成功！当前已到达dashboard页面")
+        log("✅ 账号密码登录成功！当前已到达dashboard页面")
         return True
     except Exception as e:
         log(f"❌ 登录异常: {e}")
@@ -465,12 +436,9 @@ def get_server_id(page):
             server_id = matches[0]
             log(f"✅ 从文本 #号中获取到 Server ID: {server_id}")
             return server_id
-
-        log("❌ 所有 URL 均未找到 Server ID")
         return None
     except Exception as e:
         log(f"❌ 获取 Server ID 失败: {e}")
-        page.screenshot(path="server_id_error.png")
         return None
 
 def get_due_date(page):
@@ -503,7 +471,6 @@ def renew_service(page):
 
         log("🖱️ 准备点击 Renew 按钮...")
         renew_btn = page.locator('button:has-text("Renew")')
-        create_btn = page.locator('button:has-text("Create Invoice")')
 
         modal_opened = False
         for i in range(6):
@@ -522,7 +489,8 @@ def renew_service(page):
 
                 log("🖲️ 等待弹窗出现...")
                 try:
-                    create_btn.wait_for(state="visible", timeout=8000)
+                    # 改为检测弹窗内包含的唯一特征元素或直接检测 Create Invoice 按钮
+                    page.locator('button:has-text("Create Invoice")').wait_for(state="visible", timeout=8000)
                     modal_opened = True
                     log("✅ 弹窗已成功弹出！")
                     break
@@ -539,25 +507,24 @@ def renew_service(page):
 
         # 处理弹窗内 Turnstile 人机验证
         handle_cloudflare(page, timeout=60)
-        if not solve_modal_turnstile(page, timeout=90):
-            log("⚠️ Turnstile 未确认通过，仍将尝试提交...")
-            page.screenshot(path="turnstile_timeout.png")
+        solve_modal_turnstile(page, timeout=90)
 
-        # 点击 Create Invoice 循环逻辑
+        # ⭐️ 核心修复：点击 Create Invoice 循环逻辑（每次循环动态重新定位按钮，防止元素句柄失效）
         new_invoice_url = None
         for attempt in range(6):
             log(f"🖱️ 点击 'Create Invoice'（第 {attempt + 1} 次）...")
             try:
-                create_btn.wait_for(state="visible", timeout=20000)
+                # 每次在循环内部实时获取最新的动态按钮对象
+                current_create_btn = page.locator('button:has-text("Create Invoice")')
+                current_create_btn.wait_for(state="visible", timeout=20000)
                 
-                # ⭐️ 核心修复：通过 JS 强制移除遮挡并拦截点击事件的 Cookie/隐私合规弹窗（#ncmp__tool）
+                # 自动移除可能拦截点击的 Cookie 弹窗
                 try:
                     page.evaluate("() => { const banner = document.getElementById('ncmp__tool'); if (banner) banner.remove(); }")
                 except Exception:
                     pass
 
-                # 使用 force=True 彻底绕过指针事件拦截
-                create_btn.click(force=True, timeout=20000)
+                current_create_btn.click(force=True, timeout=20000)
             except Exception as e:
                 log(f"⚠️ 点击 Create Invoice 失败: {e}")
                 solve_modal_turnstile(page, timeout=45)
@@ -570,7 +537,6 @@ def renew_service(page):
                     log(f"🎉 页面已跳转: {new_invoice_url}")
                     break
                 if _has_interstitial_iframe(page) or _is_security_check_page(page):
-                    log("⚠️ 遇到整页拦截，尝试处理...")
                     handle_cloudflare(page, timeout=60)
                 time.sleep(1)
             if new_invoice_url:
@@ -605,8 +571,6 @@ def renew_service(page):
         return False
 
 def main():
-    log(f"🔍 凭证检测: COOKIE_VALUE={'已配置' if COOKIE_VALUE else '未配置'}, "
-        f"EMAIL={'已配置' if EMAIL else '未配置'}, PASSWORD={'已配置' if PASSWORD else '未配置'}")
     if not COOKIE_VALUE and not (EMAIL and PASSWORD):
         log("❌ 缺少登录凭证")
         sys.exit(1)
@@ -643,14 +607,11 @@ def main():
 
             new_due = old_due
             if renew_result == "NOT_TIME":
-                log("⏳ 未到续期时间，目前无法续期")
                 status = "⏳ 未到续期时间"
             elif renew_result is False:
-                log("❌ 续费失败，脚本退出。")
                 status = "❌ 续期失败"
             else:
                 new_due = get_due_date(page)
-                log(f"📆 续费后到期时间：{new_due}")
                 status = "✅ 续期成功"
 
             send_telegram_notification(status, old_due, new_due, current_ip)
