@@ -10,11 +10,11 @@ except ImportError:
     USING_PATCHRIGHT = False
 
 # --- 环境变量 ---
-COOKIE_VALUE = os.environ.get('COOKIE_VALUE') or ""    
-EMAIL        = os.environ.get('EMAIL') or ""           
-PASSWORD     = os.environ.get('PASSWORD') or ""        
-TG_CHAT_ID   = os.environ.get('TG_CHAT_ID') or ""      
-TG_BOT_TOKEN = os.environ.get('TG_BOT_TOKEN') or ""    
+COOKIE_VALUE = os.environ.get('COOKIE_VALUE') or ""    # 绑定了Discord的 cookie 值，强烈建议使用此项
+EMAIL        = os.environ.get('EMAIL') or ""           # 登录邮箱（如配置了COOKIE_VALUE，建议清空此项以防被拦截）
+PASSWORD     = os.environ.get('PASSWORD') or ""        # 登录密码
+TG_CHAT_ID   = os.environ.get('TG_CHAT_ID') or ""      # Telegram Chat ID
+TG_BOT_TOKEN = os.environ.get('TG_BOT_TOKEN') or ""    # Telegram Bot Token 
 
 BASE_URL = "https://dash.hidencloud.com"
 LOGIN_URL = f"{BASE_URL}/auth/login"
@@ -24,13 +24,16 @@ IS_PROXY      = os.environ.get('IS_PROXY', 'false').lower() == 'true'
 PROXY_SERVER  = os.environ.get('PROXY_SERVER') or "http://127.0.0.1:1081"
 REQUESTS_PROXIES = {"http": PROXY_SERVER, "https": PROXY_SERVER} if IS_PROXY else None
 
+# Cloudflare 整页挑战 / Turnstile 组件共用的 iframe 选择器
 CF_IFRAME_SELECTOR = 'iframe[src*="challenges.cloudflare.com"]'
 
+# 按运行平台选择 UA
 if sys.platform == 'win32':
     DEFAULT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
 else:
     DEFAULT_UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'
 
+# 日志
 def log(message):
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {message}", flush=True)
 
@@ -41,6 +44,7 @@ try {
 """
 
 def get_current_ip(proxy_server=None):
+    """获取当前出口IP"""
     proxies = {"http": proxy_server, "https": proxy_server} if (proxy_server and IS_PROXY) else None
     try:
         resp = requests.get("https://api.ip.sb/ip", proxies=proxies, timeout=15)
@@ -52,24 +56,21 @@ def get_current_ip(proxy_server=None):
         return "获取失败"
 
 def send_telegram_notification(status, old_due, new_due, current_ip="未知"):
+    """发送 Telegram 通知"""
     if not TG_BOT_TOKEN or not TG_CHAT_ID:
         log("⚠️ Telegram 未配置，跳过通知")
         return False
     
     local_time = time.gmtime(time.time() + 8 * 3600)
+    masked_email = "Cookie授权账户"
     if '@' in EMAIL:
         name, domain = EMAIL.split('@', 1)
-        if len(name) > 4:
-            masked_email = f"{name[:2]}****{name[-2:]}@{domain}"
-        else:
-            masked_email = f"{name}@{domain}"
-    else:
-        masked_email = EMAIL[:2] + '****'
+        masked_email = f"{name[:2]}****@{domain}" if len(name) > 4 else f"{name}@{domain}"
 
     text = (
         f"🎉 HidenCloud 续期通知\n\n"
         f"{status}\n"
-        f"👤 账号: {masked_email}\n"
+        f"👤 账户类型: {masked_email}\n"
         f"📅 续期前到期：{old_due}\n"
         f"📅 续期后到期：{new_due}\n"
         f"🌐 续期使用IP: {current_ip}\n"
@@ -358,11 +359,14 @@ def login(page):
             if _is_logged_in(page):
                 log("✅ Cookie 登录成功！当前已到达dashboard页面")
                 return True
+            log("❌ Cookie 已失效或不正确")
         except Exception as e:
             log(f"⚠️ Cookie 登录尝试异常: {e}")
 
     if not EMAIL or not PASSWORD:
+        log("❌ 未配置有效 Cookie，且未提供账号密码")
         return False
+    
     log("💣 尝试账号密码登录...")
     try:
         page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=60000)
@@ -489,7 +493,6 @@ def renew_service(page):
 
                 log("🖲️ 等待弹窗出现...")
                 try:
-                    # 改为检测弹窗内包含的唯一特征元素或直接检测 Create Invoice 按钮
                     page.locator('button:has-text("Create Invoice")').wait_for(state="visible", timeout=8000)
                     modal_opened = True
                     log("✅ 弹窗已成功弹出！")
@@ -509,12 +512,11 @@ def renew_service(page):
         handle_cloudflare(page, timeout=60)
         solve_modal_turnstile(page, timeout=90)
 
-        # ⭐️ 核心修复：点击 Create Invoice 循环逻辑（每次循环动态重新定位按钮，防止元素句柄失效）
+        # 点击 Create Invoice 循环逻辑（每次动态获取元素，防止页面刷新后元素句柄失效）
         new_invoice_url = None
         for attempt in range(6):
             log(f"🖱️ 点击 'Create Invoice'（第 {attempt + 1} 次）...")
             try:
-                # 每次在循环内部实时获取最新的动态按钮对象
                 current_create_btn = page.locator('button:has-text("Create Invoice")')
                 current_create_btn.wait_for(state="visible", timeout=20000)
                 
@@ -571,6 +573,8 @@ def renew_service(page):
         return False
 
 def main():
+    log(f"🔍 凭证检测: COOKIE_VALUE={'已配置' if COOKIE_VALUE else '未配置'}, "
+        f"EMAIL={'已配置' if EMAIL else '未配置'}, PASSWORD={'已配置' if PASSWORD else '未配置'}")
     if not COOKIE_VALUE and not (EMAIL and PASSWORD):
         log("❌ 缺少登录凭证")
         sys.exit(1)
